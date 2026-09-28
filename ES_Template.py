@@ -13,10 +13,11 @@ from pymoo.indicators.igd import IGD
 from pymoo.indicators.hv import HV
 
 np.set_printoptions(precision=4)
-_type = torch.float
 eps = 1e-16
 
 
+# Currently, the algorithm and the Problem templates only support bi- and tri-objective problems, 
+# though the mathematical formulation of Neural-ES is general. 
 class ParametricES:
     def __init__(self, p, nn, k=None, opt='Adam', lr=1e-3, dec='TCH', verbose=True, seed=1, gpu=True):
         self._seed = seed
@@ -31,10 +32,7 @@ class ParametricES:
         self._t = 0
 
         self.K = 5 * self.D // 16 if k is None else k  # 2 * round(self.M ** 2)  # number of sampled preferences
-        if self.M > 1:
-            self.N = 2 + round(1.5 * np.log(self.D))  # number of sampled solutions per preference
-        else:
-            self.N = 4 + math.floor(3 * np.log(self.D))
+        self.N = 2 + round(1.5 * np.log(self.D))  # number of sampled solutions per preference
         self._w = np.log(self.N // 2. + .5) - np.log(1. + np.arange(self.N))
 
         self.nn = nn if not isinstance(nn, str) else torch.load(nn, weights_only=False)
@@ -44,21 +42,23 @@ class ParametricES:
         if torch.cuda.is_available() and gpu:
             self.nn.to(self._dv)
 
-        if self.M > 1:
-            if dec == '':
-                self._dec = PBI(theta=5.) if p.n_obj > 2 else ASF(eps=1e-16)
-            else:
-                self._dec = PBI(theta=5.) if dec == 'PBI' else ASF(eps=1e-16)
-            self._z = self._p.zl if self._p.zl is not None else np.full(self.M, np.inf, float)  #
-            self._r = grd("uniform", n_dim=self.M, n_partitions=pcp(100 if self.M < 3 else 300, self.M))
-            self._x, self._f = np.zeros((len(self._r), self.D), float), np.full((len(self._r), self.M), 1e32, float)
-
-            pf = p.pareto_front(300 if self.M == 2 else 990)
-            self._igd = IGD(pf) if pf is not None else (HV(ref_point=p.zu * 1.1) if p.zu is not None else None)
-            self._hist = {'igd': [], 'igd0': [], 'igd1': [], 'T': -1, 'nnv': None}  # 0 for opt, 1 for eval
+        if dec == '':
+            self._dec = PBI(theta=5.) if p.n_obj > 2 else ASF(eps=1e-16)
         else:
-            self._x, self._f = np.zeros(self.D, float), np.inf
-            self._hist = {'f_opt': [], 'x_opt': [], 'f_cub': [], 'm': [], 'T': -1}
+            self._dec = PBI(theta=5.) if dec == 'PBI' else ASF(eps=1e-16)
+        self._z = self._p.zl if self._p.zl is not None else np.full(self.M, np.inf, float)  # utopian point
+        self._r = grd("uniform", n_dim=self.M, n_partitions=pcp(100 if self.M < 3 else 300, self.M))  # preferences
+        # solution archive
+        self._x, self._f = np.zeros((len(self._r), self.D), float), np.full((len(self._r), self.M), 1e32, float)
+        
+        pf = p.pareto_front(300 if self.M == 2 else 990)
+        self._igd = IGD(pf) if pf is not None else (HV(ref_point=p.zu * 1.1) if p.zu is not None else None)
+        self._hist = {'igd': [],  # IGD curve of every-epoch population
+                      'igd0': [],  # IGD curve of the solution archive
+                      'igd1': [],  # curve of the validation IGD
+                      'T': -1,  # number of evaluations consumed 
+                      'nnv': None  # model with the lowest validation IGD so-far
+                      }
 
     @classmethod
     def name(cls):
@@ -69,18 +69,14 @@ class ParametricES:
         fr = self._p.evaluate(pop_r)  # .flatten()
         g = 1e20 * (np.any(np.logical_or(pop < self._xl, pop > self._xu), axis=1) + np.linalg.norm(pop_r - pop, axis=1))
         ranks = np.zeros_like(g, float)
-        if self.M > 1:
-            self._z = np.minimum(self._z, np.min(fr, axis=0))
-            # one vectorized one-to-one decomposition with per-row weights instead of len(w) small calls
-            gg = self._dec.do(fr, np.repeat(w, self.N, axis=0), utopian_point=self._z) + g
-            gg = gg.reshape(len(w), self.N)
-            order = np.argsort(gg, axis=1)                            # (len(w), N)
-            ranks = np.empty_like(gg)
-            ranks[np.arange(len(w))[:, None], order] = self._w        # rank weights per group
-            ranks = ranks.reshape(-1)
-        else:
-            fr = fr.flatten()
-            ranks[np.argsort(g + fr)] = self._w
+        self._z = np.minimum(self._z, np.min(fr, axis=0))
+        # one vectorized one-to-one decomposition with per-row weights instead of len(w) small calls
+        gg = self._dec.do(fr, np.repeat(w, self.N, axis=0), utopian_point=self._z) + g
+        gg = gg.reshape(len(w), self.N)
+        order = np.argsort(gg, axis=1)                            # (len(w), N)
+        ranks = np.empty_like(gg)
+        ranks[np.arange(len(w))[:, None], order] = self._w        # rank weights per group
+        ranks = ranks.reshape(-1)
         return fr, ranks, pop_r
 
     def _sample(self, w=None):
@@ -93,10 +89,7 @@ class ParametricES:
         return xs
 
     def _sample_pref(self):  # dup: duplicate
-        if self.M == 1:
-            return None
-        w = np.random.rand(self.K, self.M - 1)  # np.random.dirichlet(np.ones(self.M, float), n_pre)
-        return np.hstack((w, 1. - np.sum(w, axis=1, keepdims=True)))  # sample preferences
+        return np.random.dirichlet(np.ones(self.M, float), self.K)
 
     def _train(self, pop, zs, w, theta):
         raise NotImplementedError
@@ -108,7 +101,13 @@ class ParametricES:
             torch.nn.utils.clip_grad_norm_(self.nn.parameters(), 100.)
         self._opt.step()
 
-    def evolve(self, n_eval, igd_tar=None, f_tar=None, valid=True, skip=10):
+    def evolve(self, n_eval, valid=False, igd_tar=None, skip=10):
+        """
+        n_eval: evaluation budget
+        valid: whether to evaluate the validation IGD curve, slower the training if True
+        igd_tar: early stop if the validation IGD is below this threshold
+        skip: evaluation frequency for logging
+        """
         self._hist['T'] = n_eval
         tik, evl = time.time(), 0
         igd_val_best = np.inf if hasattr(self, '_igd') and isinstance(self._igd, IGD) else 0.
@@ -124,57 +123,33 @@ class ParametricES:
             self._train(pop, zs, ranks, theta)
             evl += len(pop_r)
 
-            if self.M > 1:
-                g = self._dec.do(fr, self._r, utopian_point=self._z, _type="many_to_many")
-                elite = np.argmin(g, axis=0)
-                pick = np.where(np.diag(g[elite]) < self._dec.do(self._f, self._r, utopian_point=self._z,
-                                                                 _type="one_to_one"))[0]
-                self._x[pick], self._f[pick] = pop_r[elite[pick]], fr[elite[pick]]
-
-                if not self._t % skip:
-                    igd, igd0 = self._igd(fr), self._igd(self._f)
-                    self._hist['igd'].append(igd)
-                    self._hist['igd0'].append(igd0)
-                    igd1 = 0.
-                    if valid:
-                        igd1 = self._igd(self._p.evaluate(np.clip(self.sample(self._r), self._xl, self._xu)))
-                        self._hist['igd1'].append(igd1)
-                        if (igd1 < igd_val_best and isinstance(self._igd, IGD)) or \
-                                (igd1 > igd_val_best and isinstance(self._igd, HV)):
-                            self._hist['nnv'] = copy.deepcopy(self.nn)
-                            self._hist['nnv'].to('cpu'), self._hist['nnv'].eval()
-                            igd_val_best = igd1
-                    if self._verbose:
-                        tok = time.time() - tik
-                        print(f'{self._t}, EVA:{evl:.1e}, IGD: CUR {igd:.4f} | OPT {igd0:.4f} | EVL {igd1:.4f}, '
-                              f'MIN:{self._z if self._p.zl is None else np.min(fr, axis=0)}, {tok:.2f}s')
-                    tik = time.time()
-            else:
-                pick = np.argmin(fr)
-                if fr[pick] < self._f:
-                    self._x, self._f = pop_r[pick], fr[pick]
-                f_cub = fr[pick]
-                self._hist['x_opt'].append(self._x)
-                self._hist['f_opt'].append(self._f)
-                self._hist['f_cub'].append(f_cub)
-                if self._verbose and not self._t % (skip if self.D < 100000 else 1):
-                    f_med, tok = np.median(fr), time.time() - tik
-                    if np.abs(f_med) > 1e6 or np.abs(self._f) < 1e-4:
-                        print(f'{self._t}, EVA:{evl}, OPT:{self._f:.2e}, CUB:{f_cub:.1e}, MED:{f_med:.1e}, '
-                              f'STD:{np.std(pop):.4f}, {tok:.2f}s')
-                    else:
-                        print(f'{self._t}, EVA:{evl}, OPT:{self._f:.4f}, CUB:{f_cub:.4f}, MED:{f_med:.4f}, '
-                              f'STD:{np.std(pop):.4f}, {tok:.2f}s')
-                    tik = time.time()
-
+            g = self._dec.do(fr, self._r, utopian_point=self._z, _type="many_to_many")
+            elite = np.argmin(g, axis=0)
+            pick = np.where(np.diag(g[elite]) < self._dec.do(self._f, self._r, utopian_point=self._z,
+                                                             _type="one_to_one"))[0]
+            self._x[pick], self._f[pick] = pop_r[elite[pick]], fr[elite[pick]]
+            
+            if not self._t % skip:
+                igd, igd0 = self._igd(fr), self._igd(self._f)
+                self._hist['igd'].append(igd)
+                self._hist['igd0'].append(igd0)
+                igd1 = 0.
+                if valid:
+                    igd1 = self._igd(self._p.evaluate(np.clip(self.sample(self._r), self._xl, self._xu)))
+                    self._hist['igd1'].append(igd1)
+                    if (igd1 < igd_val_best and isinstance(self._igd, IGD)) or \
+                            (igd1 > igd_val_best and isinstance(self._igd, HV)):
+                        self._hist['nnv'] = copy.deepcopy(self.nn)
+                        self._hist['nnv'].to('cpu')
+                        self._hist['nnv'].eval()
+                        igd_val_best = igd1
+                if self._verbose:
+                    print(f'{self._t}, {evl / n_eval * 100:.1f}%, IGD: CUR {igd:.4f} | OPT {igd0:.4f} | VAL {igd1:.4f}, '
+                          f'F_MIN:{self._z if self._p.zl is None else np.min(fr, axis=0)}, '
+                          f'{(time.time() - tik) / 60:.2f}min')
             self._t += 1
-
-            if self.M > 1 and self._t and igd_tar is not None:
+            if self._t and igd_tar is not None:
                 if self._hist['igd0'][-1] < igd_tar:
-                    self._hist['T'] = evl
-                    break
-            elif self._t and f_tar is not None:
-                if self._hist['f_opt'][-1] < f_tar:
                     self._hist['T'] = evl
                     break
 

@@ -1,3 +1,5 @@
+# This code is adapted from https://github.com/facebookresearch/morbo/tree/main by the Facebook Research
+
 import numpy as np
 import scipy.interpolate as si
 from scipy.interpolate import splprep

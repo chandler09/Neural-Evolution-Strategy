@@ -1,3 +1,5 @@
+# This code is adapted from https://github.com/MetaEvo/MetaBox
+
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator
 from scipy.interpolate import RegularGridInterpolator

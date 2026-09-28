@@ -50,7 +50,7 @@ class NeuralES(ParametricES):
 
     def _update_mean(self):
         x = torch.zeros((1, self.nn.din), dtype=_type, device=self._dv)
-        for idx, j in enumerate(range(0, self.D, self._dn)):  # np.random.permutation(np.arange(self.D)):  #
+        for _, j in enumerate(range(0, self.D, self._dn)):  # np.random.permutation(np.arange(self.D)):  #
             k = j + self._gauss_idx
             theta = self.nn.forward(x.clone().detach().requires_grad_(False))
             x[:, k] = theta[0].detach()
@@ -62,9 +62,8 @@ class NeuralES(ParametricES):
         wx = np.tile(np.repeat(w, self.N, axis=0) if self.nn.training else w, math.ceil(self.D / self.M))
         n = len(wx)
         x = np.zeros((n, self.nn.din), float)
-        if self.M > 1:
-            x[:, :self.D] = wx[:, :self.D]
-            x[:, self.D * 2:] = wx[:, self.D:]
+        x[:, :self.D] = wx[:, :self.D]
+        x[:, self.D * 2:] = wx[:, self.D:]
         # upload once; all per-Gaussian-block work stays on the device
         x_ten = torch.from_numpy(x).to(device=self._dv, dtype=_type)
         zs = np.random.randn(n, self.D)
@@ -72,7 +71,7 @@ class NeuralES(ParametricES):
         thetas = []
         ctx = torch.enable_grad() if self.nn.training else torch.no_grad()
         with ctx:
-            for i, j in enumerate(range(0, self.D, self._dn)):  # np.random.permutation(np.arange(self.D)):  #
+            for _, j in enumerate(range(0, self.D, self._dn)):  # np.random.permutation(np.arange(self.D)):  #
                 k = j + self._gauss_idx
                 theta = self.nn.forward(x_ten.clone())  # clone: forward saves the input for backward
                 with torch.no_grad():  # the noise mixing is not part of the loss; keep it off the autograd graph
@@ -122,6 +121,6 @@ class NeuralES(ParametricES):
 
 if __name__ == '__main__':
     from Problems import P1, P5, MO_UAV
-    p = P1(1024)
+    p = P1(128)
     nes = NeuralES(p)
-    nes.evolve(1e7, valid=False)  # whether validate the model at each epoch
+    nes.evolve(1e6, valid=False)  # whether validate the model at each epoch

@@ -135,7 +135,7 @@ class UFBi(UF):
 class UFTri(UF):
     def __init__(self, D, M=3):
         super().__init__(D, M)
-        self.xl[M-1:], self.xu[M-1:] = -2., 2.
+        self.xl[M-1:], self.xu[M-1:] = -1., 1.
 
     def _calc_pareto_front(self, n_pareto_points=100):  # default implementation is sphere (i.e., UF8)
         return pf_sphere_tri(n_pareto_points)
