@@ -123,4 +123,4 @@ if __name__ == '__main__':
     from Problems import P1, P5, MO_UAV
     p = P1(128)
     nes = NeuralES(p)
-    nes.evolve(1e6, valid=False)  # whether validate the model at each epoch
+    nes.evolve(1e6)  # whether validate the model at each epoch

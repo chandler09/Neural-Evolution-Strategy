@@ -55,9 +55,7 @@ class ParametricES:
         self._igd = IGD(pf) if pf is not None else (HV(ref_point=p.zu * 1.1) if p.zu is not None else None)
         self._hist = {'igd': [],  # IGD curve of every-epoch population
                       'igd0': [],  # IGD curve of the solution archive
-                      'igd1': [],  # curve of the validation IGD
                       'T': -1,  # number of evaluations consumed 
-                      'nnv': None  # model with the lowest validation IGD so-far
                       }
 
     @classmethod
@@ -101,16 +99,14 @@ class ParametricES:
             torch.nn.utils.clip_grad_norm_(self.nn.parameters(), 100.)
         self._opt.step()
 
-    def evolve(self, n_eval, valid=False, igd_tar=None, skip=10):
+    def evolve(self, n_eval, igd_tar=None, skip=10):
         """
         n_eval: evaluation budget
-        valid: whether to evaluate the validation IGD curve, slower the training if True
         igd_tar: early stop if the validation IGD is below this threshold
         skip: evaluation frequency for logging
         """
         self._hist['T'] = n_eval
         tik, evl = time.time(), 0
-        igd_val_best = np.inf if hasattr(self, '_igd') and isinstance(self._igd, IGD) else 0.
         while evl < n_eval:
 
             pop, theta, zs, pref = self._sample()
@@ -133,19 +129,8 @@ class ParametricES:
                 igd, igd0 = self._igd(fr), self._igd(self._f)
                 self._hist['igd'].append(igd)
                 self._hist['igd0'].append(igd0)
-                igd1 = 0.
-                if valid:
-                    igd1 = self._igd(self._p.evaluate(np.clip(self.sample(self._r), self._xl, self._xu)))
-                    self._hist['igd1'].append(igd1)
-                    if (igd1 < igd_val_best and isinstance(self._igd, IGD)) or \
-                            (igd1 > igd_val_best and isinstance(self._igd, HV)):
-                        self._hist['nnv'] = copy.deepcopy(self.nn)
-                        self._hist['nnv'].to('cpu')
-                        self._hist['nnv'].eval()
-                        igd_val_best = igd1
                 if self._verbose:
-                    print(f'{self._t}, {evl / n_eval * 100:.1f}%, IGD: CUR {igd:.4f} | OPT {igd0:.4f} | VAL {igd1:.4f}, '
-                          f'F_MIN:{self._z if self._p.zl is None else np.min(fr, axis=0)}, '
+                    print(f'{self._t}, {evl / n_eval * 100:.1f}%, IGD: CUR {igd:.4f} | OPT {igd0:.4f}, '
                           f'{(time.time() - tik) / 60:.2f}min')
             self._t += 1
             if self._t and igd_tar is not None:
