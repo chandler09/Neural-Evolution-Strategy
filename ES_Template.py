@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import time
 from pymoo.decomposition.asf import ASF
-from my_utils import PBI
+from pymoo.core.decomposition import Decomposition
 from pymoo.util.ref_dirs import get_reference_directions as grd  # preferences
 from pymoo.util.reference_direction import get_partition_closest_to_points as pcp
 from pymoo.indicators.igd import IGD
@@ -18,7 +18,7 @@ eps = 1e-16
 
 
 class ParametricES:
-    def __init__(self, p, nn, k=None, opt='Adam', lr=1e-3, dec='TCH', detail=False, verbose=True, seed=1, gpu=True):
+    def __init__(self, p, nn, k=None, opt='Adam', lr=1e-3, dec='TCH', verbose=True, seed=1, gpu=True):
         self._seed = seed
         self._dv = torch.device("cuda" if torch.cuda.is_available() and gpu else "cpu")
         np.random.seed(seed)
@@ -28,14 +28,11 @@ class ParametricES:
         self.D = p.n_var
         self._xl, self._xu = p.xl, p.xu
         self._verbose = verbose
-        self._detail = detail
         self._t = 0
 
-        # self.K = (2 ** (1 + self.M) * 5) if k is None else k  # 2 * round(self.M ** 2)
         self.K = 5 * self.D // 16 if k is None else k  # 2 * round(self.M ** 2)  # number of sampled preferences
         if self.M > 1:
             self.N = 2 + round(1.5 * np.log(self.D))  # number of sampled solutions per preference
-            # self.N = 4 + math.floor(3 * np.log(self.D))  # number of sampled solutions per preference
         else:
             self.N = 4 + math.floor(3 * np.log(self.D))
         self._w = np.log(self.N // 2. + .5) - np.log(1. + np.arange(self.N))
@@ -46,14 +43,12 @@ class ParametricES:
             torch.optim.SGD(self.nn.parameters(), lr=lr, momentum=.9, nesterov=True)  # )
         if torch.cuda.is_available() and gpu:
             self.nn.to(self._dv)
-            self.nn.cuda(self._dv)
 
         if self.M > 1:
             if dec == '':
                 self._dec = PBI(theta=5.) if p.n_obj > 2 else ASF(eps=1e-16)
             else:
                 self._dec = PBI(theta=5.) if dec == 'PBI' else ASF(eps=1e-16)
-            # self._z = np.array(self._p.zl) if problem.pareto_front() is not None else np.full(self.M, np.inf, float) #
             self._z = self._p.zl if self._p.zl is not None else np.full(self.M, np.inf, float)  #
             self._r = grd("uniform", n_dim=self.M, n_partitions=pcp(100 if self.M < 3 else 300, self.M))
             self._x, self._f = np.zeros((len(self._r), self.D), float), np.full((len(self._r), self.M), 1e32, float)
@@ -76,10 +71,13 @@ class ParametricES:
         ranks = np.zeros_like(g, float)
         if self.M > 1:
             self._z = np.minimum(self._z, np.min(fr, axis=0))
-            for i in range(len(w)):
-                idx = np.arange(i * self.N, (i + 1) * self.N)
-                g[idx] += self._dec.do(fr[idx], w[i], utopian_point=self._z)
-                ranks[idx[np.argsort(g[idx])]] = self._w
+            # one vectorized one-to-one decomposition with per-row weights instead of len(w) small calls
+            gg = self._dec.do(fr, np.repeat(w, self.N, axis=0), utopian_point=self._z) + g
+            gg = gg.reshape(len(w), self.N)
+            order = np.argsort(gg, axis=1)                            # (len(w), N)
+            ranks = np.empty_like(gg)
+            ranks[np.arange(len(w))[:, None], order] = self._w        # rank weights per group
+            ranks = ranks.reshape(-1)
         else:
             fr = fr.flatten()
             ranks[np.argsort(g + fr)] = self._w
@@ -119,8 +117,6 @@ class ParametricES:
             pop, theta, zs, pref = self._sample()
             fr, ranks, pop_r = self._evaluate(pop, pref)
 
-            # if not evl:
-            # print(self._igd.ref_point)
             if self._igd is None:
                 self._igd = HV(ref_point=np.clip(np.max(fr, axis=0), 1., 10.) * 2.)
                 print(self._igd.ref_point)
@@ -187,3 +183,17 @@ class ParametricES:
         torch.cuda.empty_cache()
 
         return self._hist, self._x, self._f, self.nn
+
+
+class PBI(Decomposition):
+
+    def __init__(self, theta=5, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.theta = theta
+
+    def _do(self, F, weights, **kwargs):
+        norm = np.linalg.norm(weights, axis=1)
+        F = F - self.utopian_point
+        d1 = (F * weights).sum(axis=1) / norm
+        d2 = np.linalg.norm(F - (d1[:, None] * weights / norm[:, None]), ord=1, axis=1)
+        return d1 + self.theta * d2
