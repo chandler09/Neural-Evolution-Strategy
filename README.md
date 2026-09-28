@@ -9,9 +9,10 @@ The code serves as an official implementation of Neural-ES. We keep a minimal de
 - Numpy
 - [Pymoo](https://pymoo.org/) (for multi-objective optimization)
 
-You may find a minimal usage example here. 
+You may find a minimal usage example in this [demo](https://github.com/chandler09/Neural-Evolution-Strategy/blob/main/demo.ipynb). 
 
 We would appreciate it if you found our work helpful and would kindly cite our paper: 
+
 ```bash
 @article{lu2026neural,
   title={Neural Evolution Strategy for Black-box Pareto Set Learning},
