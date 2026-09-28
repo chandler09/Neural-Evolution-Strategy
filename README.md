@@ -9,7 +9,7 @@ The code serves as an official implementation of Neural-ES. We keep a minimal de
 - Numpy
 - [Pymoo](https://pymoo.org/) (for multi-objective optimization)
 
-You may find a minimal usage example in this [demo](https://github.com/chandler09/Neural-Evolution-Strategy/blob/main/demo.ipynb). 
+You may find a minimal usage example in this [demo](https://github.com/chandler09/Neural-Evolution-Strategy/blob/main/demo_bi.ipynb). 
 
 We would appreciate it if you found our work helpful and would kindly cite our paper: 
 
