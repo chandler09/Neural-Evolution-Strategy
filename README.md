@@ -2,7 +2,7 @@
 
 <img width="1504" height="365" alt="image" src="https://github.com/user-attachments/assets/ab5eb970-f3d1-4b95-be68-6fbd155baa2a" />
 
-Neural Evolution Strategy (Neural-ES) uses a feed-forward neural network to learn a Pareto-Set (PS) manifold and, at the same time, model the search distribution. By estimating the natural gradient, as most ES algorithms do, it can learn the PS manifold without gradient information from the problem. The black-box PS learning paradigm differs from traditional evolutionary multi-objective optimization by enabling zero-shot optimization for unseen user preferences. For more details, you are encouraged to read our [paper](https://proceedings.neurips.cc/paper_files/paper/2025/file/fa7b618cb7f8b35ba06e9418c2cd1c1c-Paper-Conference.pdf).  
+Neural Evolution Strategy (Neural-ES) uses a feed-forward neural network to learn a Pareto-Set (PS) manifold and, at the same time, model the search distribution. By estimating the natural gradient, as most ES algorithms do, it can learn the PS manifold without gradient information from the problem. Black-box PS learning differs from traditional evolutionary multi-objective optimization by enabling zero-shot optimization for unseen user preferences. For more details, you are encouraged to read our [paper](https://proceedings.neurips.cc/paper_files/paper/2025/file/fa7b618cb7f8b35ba06e9418c2cd1c1c-Paper-Conference.pdf).  
 
 The code serves as an official implementation of Neural-ES. We keep a minimal dependency on Python packages, which include: 
 - Pytorch (and CUDA, of course)
